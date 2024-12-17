@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>图片颜色反转工具</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .upload-form {
+            text-align: center;
+            margin: 20px 0;
+        }
+        .file-input {
+            margin: 10px 0;
+        }
+        .submit-btn {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .submit-btn:hover {
+            background-color: #45a049;
+        }
+        .result {
+            margin-top: 20px;
+            text-align: center;
+        }
+        .result img {
+            max-width: 100%;
+            margin: 10px 0;
+        }
+        .error {
+            color: red;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>图片颜色反转工具</h1>
+        <div class="upload-form">
+            <form action="/" method="post" enctype="multipart/form-data">
+                <div class="file-input">
+                    <input type="file" name="file" accept="image/*" required>
+                </div>
+                <button type="submit" class="submit-btn">上传并处理</button>
+            </form>
+        </div>
+        
+        {% if error %}
+        <div class="error">
+            {{ error }}
+        </div>
+        {% endif %}
+
+        {% if original_image and processed_image %}
+        <div class="result">
+            <h3>原始图片：</h3>
+            <img src="{{ original_image }}" alt="Original Image">
+            <h3>处理后的图片：</h3>
+            <img src="{{ processed_image }}" alt="Processed Image">
+            <p>
+                <a href="{{ processed_image }}" download class="submit-btn">下载处理后的图片</a>
+            </p>
+        </div>
+        {% endif %}
+    </div>
+</body>
+</html>

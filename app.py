@@ -1,23 +1,20 @@
 import os
 import hashlib
+import io
 from flask import Flask, render_template, request, url_for, send_from_directory
 from werkzeug.utils import secure_filename
 from PIL import Image
-import numpy as np
-from datetime import datetime, timedelta
-import shutil
 import traceback
 import logging
+from datetime import datetime, timedelta
 
 # 配置日志
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 # 配置上传文件夹路径
-if os.environ.get('VERCEL_ENV') == 'production':
-    UPLOAD_FOLDER = '/tmp/uploads'
-else:
-    UPLOAD_FOLDER = 'uploads'
+UPLOAD_FOLDER = '/tmp'
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
@@ -26,18 +23,12 @@ app.config['MAX_CONTENT_LENGTH'] = 4.5 * 1024 * 1024  # 4.5MB max-limit
 # 确保上传文件夹存在
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
-
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-def get_file_hash(file_path):
+def get_file_hash(file_data):
     """计算文件的MD5哈希值"""
-    hash_md5 = hashlib.md5()
-    with open(file_path, "rb") as f:
-        for chunk in iter(lambda: f.read(4096), b""):
-            hash_md5.update(chunk)
-    return hash_md5.hexdigest()
+    return hashlib.md5(file_data).hexdigest()
 
 def clean_old_files():
     """清理超过24小时的文件"""
@@ -53,47 +44,37 @@ def clean_old_files():
             except OSError:
                 pass
 
-def invert_black_white(image_path, output_path):
-    """使用PIL直接处理图片"""
+def invert_black_white(image_data):
+    """使用PIL直接处理图片数据"""
     try:
-        logger.debug(f"开始处理图片: {image_path}")
+        # 从二进制数据创建图像对象
+        image = Image.open(io.BytesIO(image_data))
         
-        # 打开图片
-        img = Image.open(image_path)
-        logger.debug(f"图片信息: 模式={img.mode}, 大小={img.size}")
+        # 如果图片模式不是RGB，转换为RGB
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
         
-        # 转换为 RGB 模式（如果不是的话）
-        if img.mode != 'RGB':
-            img = img.convert('RGB')
+        # 创建新图像
+        width, height = image.size
+        inverted_image = Image.new('RGB', (width, height))
         
         # 获取像素数据
-        pixels = img.load()
-        width, height = img.size
+        pixels = image.load()
+        inverted_pixels = inverted_image.load()
         
-        # 创建新图片
-        new_img = Image.new('RGB', (width, height), 'white')
-        new_pixels = new_img.load()
-        
-        # 处理每个像素
+        # 反转每个像素
         for x in range(width):
             for y in range(height):
                 r, g, b = pixels[x, y]
-                # 计算亮度
-                brightness = (r + g + b) // 3
-                # 如果亮度小于128，设为白色；否则设为黑色
-                if brightness < 128:
-                    new_pixels[x, y] = (255, 255, 255)
-                else:
-                    new_pixels[x, y] = (0, 0, 0)
+                inverted_pixels[x, y] = (255-r, 255-g, 255-b)
         
-        # 保存结果
-        new_img.save(output_path)
-        logger.debug(f"图片已保存到: {output_path}")
+        # 将处理后的图片保存到内存中
+        output_buffer = io.BytesIO()
+        inverted_image.save(output_buffer, format='PNG')
+        return output_buffer.getvalue()
         
     except Exception as e:
         logger.error(f"处理图片时出错: {str(e)}")
-        logger.error(f"错误类型: {type(e).__name__}")
-        logger.error(f"完整错误信息:\n{traceback.format_exc()}")
         raise
 
 @app.route('/uploads/<filename>')
@@ -104,9 +85,6 @@ def uploaded_file(filename):
 def upload_file():
     if request.method == 'POST':
         try:
-            # 清理旧文件
-            clean_old_files()
-            
             # 检查是否有文件
             if 'file' not in request.files:
                 logger.warning("没有文件被上传")
@@ -118,57 +96,44 @@ def upload_file():
                 return render_template('index.html', error='No file')
             
             if file and allowed_file(file.filename):
-                # 安全地获取文件名
-                filename = secure_filename(file.filename)
-                logger.debug(f"处理文件: {filename}")
-                base_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+                # 读取文件数据
+                file_data = file.read()
                 
-                # 生成唯一的文件名
-                name, ext = os.path.splitext(base_path)
-                counter = 1
-                while os.path.exists(base_path):
-                    base_path = f"{name}_{counter}{ext}"
-                    counter += 1
+                # 计算文件哈希值
+                file_hash = get_file_hash(file_data)
+                
+                # 生成文件名
+                filename = secure_filename(file.filename)
+                original_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+                output_filename = f"inverted_{file_hash}.png"
+                output_path = os.path.join(app.config['UPLOAD_FOLDER'], output_filename)
                 
                 # 保存原始文件
-                logger.debug(f"保存文件到: {base_path}")
-                file.save(base_path)
+                with open(original_path, 'wb') as f:
+                    f.write(file_data)
                 
-                try:
-                    # 计算文件哈希值
-                    file_hash = get_file_hash(base_path)
-                    output_filename = f"inverted_{file_hash}{os.path.splitext(filename)[1]}"
-                    output_path = os.path.join(app.config['UPLOAD_FOLDER'], output_filename)
-                    
-                    # 如果缓存存在且文件较新，直接使用缓存
-                    if os.path.exists(output_path) and \
-                       datetime.now() - datetime.fromtimestamp(os.path.getmtime(output_path)) < timedelta(hours=24):
-                        logger.debug("使用缓存的处理结果")
-                    else:
-                        # 处理图片
-                        logger.debug("开始处理新图片")
-                        invert_black_white(base_path, output_path)
-                    
-                    # 生成URL
-                    original_url = url_for('uploaded_file', filename=os.path.basename(base_path))
-                    processed_url = url_for('uploaded_file', filename=output_filename)
-                    
-                    return render_template('index.html', 
-                                         original_image=original_url,
-                                         processed_image=processed_url,
-                                         success="processed_image")
+                # 处理图片
+                processed_data = invert_black_white(file_data)
                 
-                except Exception as e:
-                    logger.error(f"处理图片时出错: {str(e)}")
-                    logger.error(traceback.format_exc())
-                    return render_template('index.html', error=f'处理图片时出错: {str(e)}')
+                # 保存处理后的图片
+                with open(output_path, 'wb') as f:
+                    f.write(processed_data)
+                
+                # 生成URL
+                original_url = url_for('uploaded_file', filename=filename)
+                processed_url = url_for('uploaded_file', filename=output_filename)
+                
+                return render_template('index.html', 
+                                     original_image=original_url,
+                                     processed_image=processed_url,
+                                     success="processed_image")
             
             logger.warning(f"不支持的文件类型: {file.filename}")
             return render_template('index.html', error='Invalid image')
         
         except Exception as e:
             logger.error(f"上传处理时出错: {str(e)}")
-            logger.error(traceback.format_exc())
+            logger.error(f"完整错误信息:\n{traceback.format_exc()}")
             return render_template('index.html', error=f'服务器错误: {str(e)}')
     
     return render_template('index.html')

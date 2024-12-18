@@ -9,7 +9,7 @@ import logging
 from datetime import datetime, timedelta
 
 # 配置日志
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # 配置上传文件夹路径

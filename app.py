@@ -1,12 +1,16 @@
 import os
+import hashlib
 from flask import Flask, render_template, request, url_for, send_from_directory
 from werkzeug.utils import secure_filename
 from PIL import Image
+import numpy as np
+from datetime import datetime, timedelta
+import shutil
 
 app = Flask(__name__)
 # 设置上传文件夹的绝对路径
 app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max-limit
+app.config['MAX_CONTENT_LENGTH'] = 4.5 * 1024 * 1024  # 4.5MB max-limit
 
 # 确保上传目录存在
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -16,7 +20,30 @@ ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
+def get_file_hash(file_path):
+    """计算文件的MD5哈希值"""
+    hash_md5 = hashlib.md5()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_md5.update(chunk)
+    return hash_md5.hexdigest()
+
+def clean_old_files():
+    """清理超过24小时的文件"""
+    now = datetime.now()
+    for filename in os.listdir(app.config['UPLOAD_FOLDER']):
+        if filename == '.gitkeep':
+            continue
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file_modified = datetime.fromtimestamp(os.path.getmtime(file_path))
+        if now - file_modified > timedelta(hours=24):
+            try:
+                os.remove(file_path)
+            except OSError:
+                pass
+
 def invert_black_white(image_path, output_path):
+    """使用numpy加速图片处理"""
     # 打开图片
     img = Image.open(image_path)
     
@@ -24,29 +51,31 @@ def invert_black_white(image_path, output_path):
     if img.mode != 'RGBA':
         img = img.convert('RGBA')
     
-    # 获取图片尺寸
-    width, height = img.size
+    # 转换为numpy数组以加速处理
+    img_array = np.array(img)
     
-    # 创建新图片
-    inverted_img = Image.new('RGBA', (width, height))
+    # 分离通道
+    rgb = img_array[:, :, :3]
+    alpha = img_array[:, :, 3]
     
-    # 获取像素数据
-    pixels = img.load()
-    new_pixels = inverted_img.load()
+    # 计算灰度值
+    gray = np.mean(rgb, axis=2)
     
-    # 对每个像素进行处理
-    for x in range(width):
-        for y in range(height):
-            r, g, b, a = pixels[x, y]
-            # 如果是黑色（或接近黑色）且不透明，变成白色
-            # 如果是白色（或接近白色）且不透明，变成黑色
-            if r + g + b < 384:  # 小于128*3，认为是黑色
-                new_pixels[x, y] = (255, 255, 255, a)  # 变成白色
-            else:
-                new_pixels[x, y] = (0, 0, 0, a)  # 变成黑色
+    # 创建输出数组
+    output_array = np.zeros_like(img_array)
     
-    # 保存结果
-    inverted_img.save(output_path)
+    # 设置alpha通道
+    output_array[:, :, 3] = alpha
+    
+    # 根据灰度值设置颜色
+    # 使用numpy的布尔索引加速处理
+    dark_pixels = gray < 128
+    output_array[dark_pixels, :3] = 255  # 暗像素变白
+    output_array[~dark_pixels, :3] = 0   # 亮像素变黑
+    
+    # 转换回PIL图像并保存
+    output_img = Image.fromarray(output_array)
+    output_img.save(output_path)
 
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
@@ -55,6 +84,9 @@ def uploaded_file(filename):
 @app.route('/', methods=['GET', 'POST'])
 def upload_file():
     if request.method == 'POST':
+        # 清理旧文件
+        clean_old_files()
+        
         # 检查是否有文件
         if 'file' not in request.files:
             return render_template('index.html', error='没有选择文件')
@@ -78,13 +110,19 @@ def upload_file():
             # 保存原始文件
             file.save(base_path)
             
-            # 生成处理后的文件名
-            output_filename = f"inverted_{os.path.basename(base_path)}"
-            output_path = os.path.join(app.config['UPLOAD_FOLDER'], output_filename)
-            
-            # 处理图片
             try:
-                invert_black_white(base_path, output_path)
+                # 计算文件哈希值
+                file_hash = get_file_hash(base_path)
+                output_filename = f"inverted_{file_hash}{os.path.splitext(filename)[1]}"
+                output_path = os.path.join(app.config['UPLOAD_FOLDER'], output_filename)
+                
+                # 如果缓存存在且文件较新，直接使用缓存
+                if os.path.exists(output_path) and \
+                   datetime.now() - datetime.fromtimestamp(os.path.getmtime(output_path)) < timedelta(hours=24):
+                    pass
+                else:
+                    # 处理图片
+                    invert_black_white(base_path, output_path)
                 
                 # 生成URL
                 original_url = url_for('uploaded_file', filename=os.path.basename(base_path))
@@ -96,7 +134,7 @@ def upload_file():
             
             except Exception as e:
                 return render_template('index.html', error=f'处理图片时出错: {str(e)}')
-        
+            
         return render_template('index.html', error='不支持的文件类型')
     
     return render_template('index.html')

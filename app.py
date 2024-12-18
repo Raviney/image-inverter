@@ -13,13 +13,18 @@ import logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
+# 配置上传文件夹路径
+if os.environ.get('VERCEL_ENV') == 'production':
+    UPLOAD_FOLDER = '/tmp/uploads'
+else:
+    UPLOAD_FOLDER = 'uploads'
+
 app = Flask(__name__)
-# 设置上传文件夹的绝对路径
-app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 4.5 * 1024 * 1024  # 4.5MB max-limit
 
-# 确保上传目录存在
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+# 确保上传文件夹存在
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 

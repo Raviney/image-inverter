@@ -85,6 +85,10 @@ def uploaded_file(filename):
 def upload_file():
     if request.method == 'POST':
         try:
+            # 清理旧文件
+            clean_old_files()
+            logger.debug("清理旧文件完成")
+            
             # 检查是否有文件
             if 'file' not in request.files:
                 logger.warning("没有文件被上传")
@@ -98,9 +102,11 @@ def upload_file():
             if file and allowed_file(file.filename):
                 # 读取文件数据
                 file_data = file.read()
+                logger.debug(f"接收到文件: {file.filename}, 大小: {len(file_data)} bytes")
                 
                 # 计算文件哈希值
                 file_hash = get_file_hash(file_data)
+                logger.debug(f"文件哈希值: {file_hash}")
                 
                 # 生成文件名
                 filename = secure_filename(file.filename)
@@ -111,13 +117,16 @@ def upload_file():
                 # 保存原始文件
                 with open(original_path, 'wb') as f:
                     f.write(file_data)
+                logger.debug(f"保存原始文件到: {original_path}")
                 
                 # 处理图片
                 processed_data = invert_black_white(file_data)
+                logger.debug(f"处理图片完成")
                 
                 # 保存处理后的图片
                 with open(output_path, 'wb') as f:
                     f.write(processed_data)
+                logger.debug(f"保存处理后的图片到: {output_path}")
                 
                 # 生成URL
                 original_url = url_for('uploaded_file', filename=filename)
